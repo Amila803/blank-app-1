@@ -2,11 +2,17 @@ import streamlit as st
 import pandas as pd
 import joblib
 from datetime import datetime
+import os
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+import re
 
-# Load the trained model
-model = joblib.load('travel_cost_model.joblib')
+# Constants
+MODEL_PATH = 'travel_cost_model.joblib'
+DATA_PATH = 'Travel_details_dataset.csv'
 
-# Destination options (extracted from dataset)
 DESTINATIONS = [
     'London', 'Phuket', 'Bali', 'New York', 'Tokyo', 'Paris', 'Sydney',
     'Rio de Janeiro', 'Amsterdam', 'Dubai', 'Cancun', 'Barcelona',
@@ -25,8 +31,60 @@ TRANSPORTATION_TYPES = [
     'Ferry', 'Car'
 ]
 
-def predict_cost(destination, start_date, duration, accommodation, transportation):
-    # Prepare input data
+def clean_cost(value):
+    if pd.isna(value):
+        return np.nan
+    if isinstance(value, str):
+        cleaned = re.sub(r'[^\d.]', '', value)
+        return float(cleaned) if cleaned else np.nan
+    return float(value)
+
+def load_and_preprocess_data():
+    df = pd.read_csv(DATA_PATH)
+    df = df.dropna(how='all')
+    df['Accommodation cost'] = df['Accommodation cost'].apply(clean_cost)
+    df['Transportation cost'] = df['Transportation cost'].apply(clean_cost)
+    df['Total cost'] = df['Accommodation cost'] + df['Transportation cost']
+    df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+    df['End date'] = pd.to_datetime(df['End date'], errors='coerce')
+    df = df.dropna(subset=['Start date', 'End date'])
+    df['Year'] = df['Start date'].dt.year
+    df['Month'] = df['Start date'].dt.month
+    df['Season'] = df['Start date'].dt.month % 12 // 3 + 1
+    df['Destination'] = df['Destination'].str.split(',').str[0].str.strip()
+    features = ['Destination', 'Duration (days)', 'Accommodation type', 
+                'Transportation type', 'Year', 'Month', 'Season']
+    target = 'Total cost'
+    df = df.dropna(subset=features + [target])
+    return df[features], df[target]
+
+def train_model():
+    X, y = load_and_preprocess_data()
+    categorical_features = ['Destination', 'Accommodation type', 'Transportation type']
+    numerical_features = ['Duration (days)', 'Year', 'Month', 'Season']
+    
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features),
+            ('num', 'passthrough', numerical_features)
+        ])
+    
+    model = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('regressor', RandomForestRegressor(n_estimators=100, random_state=42))
+    ])
+    
+    model.fit(X, y)
+    joblib.dump(model, MODEL_PATH)
+    return model
+
+def load_model():
+    if not os.path.exists(MODEL_PATH):
+        st.info("Training the model for the first time... This may take a minute.")
+        return train_model()
+    return joblib.load(MODEL_PATH)
+
+def predict_cost(model, destination, start_date, duration, accommodation, transportation):
     input_data = pd.DataFrame({
         'Destination': [destination],
         'Duration (days)': [duration],
@@ -36,18 +94,15 @@ def predict_cost(destination, start_date, duration, accommodation, transportatio
         'Month': [start_date.month],
         'Season': [(start_date.month % 12) // 3 + 1]
     })
-    
-    # Make prediction
-    prediction = model.predict(input_data)[0]
-    return round(prediction, 2)
+    return round(model.predict(input_data)[0], 2)
 
 def main():
     st.title('Travel Cost Estimator')
-    st.write("""
-    Estimate the total cost of your trip based on destination, dates, and accommodation type.
-    """)
+    st.write("Estimate the total cost of your trip based on destination, dates, and accommodation type.")
     
-    # Input form
+    # Load or train model
+    model = load_model()
+    
     with st.form("travel_form"):
         col1, col2 = st.columns(2)
         
@@ -63,16 +118,13 @@ def main():
         submitted = st.form_submit_button("Estimate Cost")
     
     if submitted:
-        # Make prediction
         total_cost = predict_cost(
-            destination, start_date, duration, accommodation, transportation
+            model, destination, start_date, duration, accommodation, transportation
         )
         
-        # Display results
         st.subheader("Estimated Cost")
         st.metric(label="Total Estimated Cost", value=f"${total_cost:,.2f}")
         
-        # Breakdown (approximate based on model features)
         st.write("**Estimated Cost Breakdown:**")
         col1, col2 = st.columns(2)
         with col1:
