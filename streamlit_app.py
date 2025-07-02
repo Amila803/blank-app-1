@@ -1,106 +1,84 @@
-# streamlit_app.py
-
 import streamlit as st
 import pandas as pd
 import joblib
-from pathlib import Path
 from datetime import datetime
 
-BASE_DIR = Path(__file__).resolve().parent
-model_path = BASE_DIR / "model" / "trip_cost_forecast_model.py"
+# Load the trained model
+model = joblib.load('travel_cost_model.joblib')
 
-st.title("💸 Travel Cost Predictor")
+# Destination options (extracted from dataset)
+DESTINATIONS = [
+    'London', 'Phuket', 'Bali', 'New York', 'Tokyo', 'Paris', 'Sydney',
+    'Rio de Janeiro', 'Amsterdam', 'Dubai', 'Cancun', 'Barcelona',
+    'Honolulu', 'Berlin', 'Marrakech', 'Edinburgh', 'Rome', 'Bangkok',
+    'Cape Town', 'Vancouver', 'Seoul', 'Los Angeles', 'Santorini',
+    'Phnom Penh', 'Athens', 'Auckland'
+]
 
-# Load model
-# data/train_cost_forecast_model.py
+ACCOMMODATION_TYPES = [
+    'Hotel', 'Resort', 'Villa', 'Airbnb', 'Hostel', 'Riad',
+    'Guesthouse', 'Vacation rental'
+]
 
-from pathlib import Path
-import pandas as pd
-import joblib
+TRANSPORTATION_TYPES = [
+    'Flight', 'Train', 'Plane', 'Bus', 'Car rental', 'Subway',
+    'Ferry', 'Car'
+]
 
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.metrics import mean_absolute_error
+def predict_cost(destination, start_date, duration, accommodation, transportation):
+    # Prepare input data
+    input_data = pd.DataFrame({
+        'Destination': [destination],
+        'Duration (days)': [duration],
+        'Accommodation type': [accommodation],
+        'Transportation type': [transportation],
+        'Year': [start_date.year],
+        'Month': [start_date.month],
+        'Season': [(start_date.month % 12) // 3 + 1]
+    })
+    
+    # Make prediction
+    prediction = model.predict(input_data)[0]
+    return round(prediction, 2)
 
+def main():
+    st.title('Travel Cost Estimator')
+    st.write("""
+    Estimate the total cost of your trip based on destination, dates, and accommodation type.
+    """)
+    
+    # Input form
+    with st.form("travel_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            destination = st.selectbox('Destination', DESTINATIONS)
+            start_date = st.date_input('Start Date', min_value=datetime.today())
+            duration = st.number_input('Duration (days)', min_value=1, max_value=90, value=7)
+        
+        with col2:
+            accommodation = st.selectbox('Accommodation Type', ACCOMMODATION_TYPES)
+            transportation = st.selectbox('Transportation Type', TRANSPORTATION_TYPES)
+        
+        submitted = st.form_submit_button("Estimate Cost")
+    
+    if submitted:
+        # Make prediction
+        total_cost = predict_cost(
+            destination, start_date, duration, accommodation, transportation
+        )
+        
+        # Display results
+        st.subheader("Estimated Cost")
+        st.metric(label="Total Estimated Cost", value=f"${total_cost:,.2f}")
+        
+        # Breakdown (approximate based on model features)
+        st.write("**Estimated Cost Breakdown:**")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label="Accommodation", value=f"${total_cost * 0.7:,.2f}")
+        with col2:
+            st.metric(label="Transportation", value=f"${total_cost * 0.3:,.2f}")
 
-
-# Load dataset
-data_path = BASE_DIR / "data" / "Travel_details_dataset.csv"
-df = pd.read_csv(BASE_DIR / "data" / "Travel_details_dataset.csv")
-
-# Feature engineering
-df["Start date"] = pd.to_datetime(df["Start date"], errors='coerce')
-df = df.dropna(subset=["Start date", "Destination", "Accommodation cost", "Transportation cost"])
-
-df["month"] = df["Start date"].dt.month
-df["dayofweek"] = df["Start date"].dt.dayofweek
-df["Accommodation cost"] = pd.to_numeric(df["Accommodation cost"], errors='coerce')
-df["Transportation cost"] = pd.to_numeric(df["Transportation cost"], errors='coerce')
-df["total_cost"] = df["Accommodation cost"] + df["Transportation cost"]
-
-df["total_cost"] = df["Accommodation cost"] + df["Transportation cost"]
-
-X = df[["Destination", "month", "dayofweek"]]
-
-df = df.dropna(subset=["total_cost"])
-y = df["total_cost"].astype(float)
-
-
-# Split data
-print("✅ X shape:", X.shape)
-print("✅ y shape:", y.shape)
-print("✅ X preview:\n", X.head())
-print("✅ y preview:\n", y.head())
-print("✅ Any missing in X?\n", X.isnull().sum())
-print("✅ Any missing in y?\n", y.isnull().sum())
-
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
-
-# Preprocessing pipeline
-preprocessor = ColumnTransformer([
-    ("cat", OneHotEncoder(handle_unknown='ignore'), ["Destination"]),
-], remainder="passthrough")
-
-# Modeling pipeline
-pipe = Pipeline([
-    ("preprocessor", preprocessor),
-    ("model", GradientBoostingRegressor())
-])
-
-# Train
-pipe.fit(X_train, y_train)
-
-
-# Evaluate
-preds = pipe.predict(X_test)
-print("MAE:", mean_absolute_error(y_test, preds))
-
-# Save model
-model_dir = BASE_DIR / "model"
-model_dir.mkdir(exist_ok=True)
-joblib.dump(pipe, model_dir / "trip_cost_forecast_model.pkl")
-print("✅ Model saved to", model_dir / "trip_cost_forecast_model.pkl")
-# Inputs
-destination = st.selectbox("Select Destination", [
-    "London, UK", "Phuket, Thailand", "Bali, Indonesia",
-    "New York, USA", "Tokyo, Japan"
-])
-start_date = st.date_input("Trip Start Date")
-
-# Predict
-if st.button("Predict Cost"):
-    month = start_date.month
-    dayofweek = start_date.weekday()
-
-    input_df = pd.DataFrame([{
-        "Destination": destination,
-        "month": month,
-        "dayofweek": dayofweek
-    }])
-
-    prediction = model.predict(input_df)[0]
-    st.success(f"Estimated Total Cost: ${prediction:,.2f}")
+if __name__ == '__main__':
+    main()
