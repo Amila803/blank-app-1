@@ -52,8 +52,11 @@ y = df["total_cost"].astype(float)
 # Split data
 print("✅ X shape:", X.shape)
 print("✅ y shape:", y.shape)
-print("✅ Any missing in X?", X.isnull().sum())
-print("✅ Any missing in y?", y.isnull().sum())
+print("✅ X preview:\n", X.head())
+print("✅ y preview:\n", y.head())
+print("✅ Any missing in X?\n", X.isnull().sum())
+print("✅ Any missing in y?\n", y.isnull().sum())
+
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
 
