@@ -27,6 +27,14 @@ DESTINATIONS = [
     'Phnom Penh', 'Athens', 'Auckland'
 ]
 
+NATIONALITIES = [
+    'United States', 'United Kingdom', 'Canada', 'Australia', 'Germany',
+    'France', 'Japan', 'China', 'India', 'Brazil', 'Mexico', 'Russia',
+    'South Korea', 'Singapore', 'United Arab Emirates', 'South Africa',
+    'Thailand', 'Italy', 'Spain', 'Netherlands', 'Switzerland', 'Sweden',
+    'Norway', 'New Zealand', 'Argentina', 'Saudi Arabia'
+]
+
 ACCOMMODATION_TYPES = [
     'Hotel', 'Resort', 'Villa', 'Airbnb', 'Hostel', 'Riad',
     'Guesthouse', 'Vacation rental'
@@ -77,15 +85,23 @@ def load_and_preprocess_data():
         df['Season'] = df['Start date'].dt.month % 12 // 3 + 1
         df['Destination'] = df['Destination'].str.split(',').str[0].str.strip()
         
+        # Handle nationality - if column doesn't exist, create with 'Unknown'
+        if 'Nationality' not in df.columns:
+            df['Nationality'] = 'Unknown'
+        else:
+            df['Nationality'] = df['Nationality'].fillna('Unknown')
+            df['Nationality'] = df['Nationality'].str.strip()
+        
         # Additional feature engineering
         df['Duration (days)'] = (df['End date'] - df['Start date']).dt.days
         df['Is_peak_season'] = df['Month'].isin([6, 7, 8, 12]).astype(int)
         df['Is_long_trip'] = (df['Duration (days)'] > 14).astype(int)
+        df['Is_domestic'] = (df['Nationality'] == df['Destination']).astype(int)
         
         # Select features
-        features = ['Destination', 'Duration (days)', 'Accommodation type', 
+        features = ['Destination', 'Nationality', 'Duration (days)', 'Accommodation type', 
                    'Transportation type', 'Year', 'Month', 'Season',
-                   'Is_peak_season', 'Is_long_trip']
+                   'Is_peak_season', 'Is_long_trip', 'Is_domestic']
         target = 'Total cost'
         
         # Final cleaning
@@ -106,8 +122,26 @@ def evaluate_model(model, X, y):
         
         scores = cross_val_score(model, X, y, cv=5, scoring='r2')
         st.write(f"R² Score (CV): {scores.mean():.2f} (± {scores.std():.2f})")
+        
+        # Feature importance for Random Forest (if available)
+        if hasattr(model.named_steps['regressor'], 'estimators_'):
+            try:
+                rf = model.named_steps['regressor'].estimators_[0]
+                if hasattr(rf, 'feature_importances_'):
+                    # Get feature names after preprocessing
+                    preprocessor = model.named_steps['preprocessor']
+                    feature_names = (list(preprocessor.named_transformers_['cat'].get_feature_names_out()) + 
+                                   numerical_features)
+                    importances = rf.feature_importances_
+                    importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
+                    importance_df = importance_df.sort_values('Importance', ascending=False)
+                    
+                    st.subheader("Top Feature Importances")
+                    st.dataframe(importance_df.head(10))
+            except Exception as e:
+                st.warning(f"Could not display feature importances: {str(e)}")
     except Exception as e:
-        st.warning(f"Could not perform cross-validation: {str(e)}")
+        st.warning(f"Could not perform full model evaluation: {str(e)}")
 
 def train_model():
     X, y = load_and_preprocess_data()
@@ -116,8 +150,8 @@ def train_model():
         st.error("Cannot train model due to data issues.")
         return None
         
-    categorical_features = ['Destination', 'Accommodation type', 'Transportation type']
-    numerical_features = ['Duration (days)', 'Year', 'Month', 'Season', 'Is_peak_season', 'Is_long_trip']
+    categorical_features = ['Destination', 'Nationality', 'Accommodation type', 'Transportation type']
+    numerical_features = ['Duration (days)', 'Year', 'Month', 'Season', 'Is_peak_season', 'Is_long_trip', 'Is_domestic']
     
     preprocessor = ColumnTransformer(
         transformers=[
@@ -160,7 +194,8 @@ def train_model():
     ])
     
     # Train model
-    stacked_model.fit(X, y)
+    with st.spinner("Training model (this may take a few minutes)..."):
+        stacked_model.fit(X, y)
     
     # Evaluate model
     st.subheader("Model Evaluation")
@@ -186,7 +221,7 @@ def load_model():
         st.warning("Attempting to train a new model...")
         return train_model()
 
-def predict_cost(model, destination, start_date, duration, accommodation, transportation):
+def predict_cost(model, nationality, destination, start_date, duration, accommodation, transportation):
     if model is None:
         st.error("Cannot make predictions - no model available")
         return None
@@ -197,9 +232,11 @@ def predict_cost(model, destination, start_date, duration, accommodation, transp
         season = (month % 12) // 3 + 1
         is_peak_season = 1 if month in [6, 7, 8, 12] else 0
         is_long_trip = 1 if duration > 14 else 0
+        is_domestic = 1 if nationality == destination else 0
         
         input_data = pd.DataFrame({
             'Destination': [destination],
+            'Nationality': [nationality],
             'Duration (days)': [duration],
             'Accommodation type': [accommodation],
             'Transportation type': [transportation],
@@ -207,7 +244,8 @@ def predict_cost(model, destination, start_date, duration, accommodation, transp
             'Month': [month],
             'Season': [season],
             'Is_peak_season': [is_peak_season],
-            'Is_long_trip': [is_long_trip]
+            'Is_long_trip': [is_long_trip],
+            'Is_domestic': [is_domestic]
         })
         
         prediction = model.predict(input_data)[0]
@@ -218,14 +256,13 @@ def predict_cost(model, destination, start_date, duration, accommodation, transp
 
 def main():
     st.title('Travel Cost Estimator')
-    st.write("Estimate the total cost of your trip based on destination, dates, and accommodation type.")
+    st.write("Estimate the total cost of your trip based on your nationality, destination, dates, and accommodation type.")
     
     # Sidebar for model management
     with st.sidebar:
         st.header("Model Management")
         if st.button("Retrain Model"):
-            with st.spinner("Training new model..."):
-                model = train_model()
+            model = train_model()
         st.info("Click the button above to retrain the model with the latest data.")
     
     # Load or train model
@@ -239,11 +276,12 @@ def main():
         col1, col2 = st.columns(2)
         
         with col1:
+            nationality = st.selectbox('Your Nationality', NATIONALITIES, index=0)
             destination = st.selectbox('Destination', DESTINATIONS)
             start_date = st.date_input('Start Date', min_value=datetime.today())
-            duration = st.number_input('Duration (days)', min_value=1, max_value=90, value=7)
         
         with col2:
+            duration = st.number_input('Duration (days)', min_value=1, max_value=90, value=7)
             accommodation = st.selectbox('Accommodation Type', ACCOMMODATION_TYPES)
             transportation = st.selectbox('Transportation Type', TRANSPORTATION_TYPES)
         
@@ -251,7 +289,7 @@ def main():
     
     if submitted:
         total_cost = predict_cost(
-            model, destination, start_date, duration, accommodation, transportation
+            model, nationality, destination, start_date, duration, accommodation, transportation
         )
         
         if total_cost is not None:
@@ -264,6 +302,12 @@ def main():
                 st.metric(label="Accommodation", value=f"${total_cost * 0.7:,.2f}")
             with col2:
                 st.metric(label="Transportation", value=f"${total_cost * 0.3:,.2f}")
+            
+            # Show if this is a domestic trip
+            if nationality == destination:
+                st.info("This is a domestic trip (same nationality and destination)")
+            else:
+                st.info("This is an international trip")
 
 if __name__ == '__main__':
     main()
