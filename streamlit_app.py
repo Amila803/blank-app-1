@@ -37,10 +37,17 @@ df = df.dropna(subset=["Start date", "Destination", "Accommodation cost", "Trans
 
 df["month"] = df["Start date"].dt.month
 df["dayofweek"] = df["Start date"].dt.dayofweek
+df["Accommodation cost"] = pd.to_numeric(df["Accommodation cost"], errors='coerce')
+df["Transportation cost"] = pd.to_numeric(df["Transportation cost"], errors='coerce')
+df["total_cost"] = df["Accommodation cost"] + df["Transportation cost"]
+
 df["total_cost"] = df["Accommodation cost"] + df["Transportation cost"]
 
 X = df[["Destination", "month", "dayofweek"]]
-y = df["total_cost"]
+
+df = df.dropna(subset=["total_cost"])
+y = df["total_cost"].astype(float)
+
 
 # Split data
 X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
@@ -58,6 +65,7 @@ pipe = Pipeline([
 
 # Train
 pipe.fit(X_train, y_train)
+
 
 # Evaluate
 preds = pipe.predict(X_test)
