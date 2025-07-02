@@ -12,7 +12,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error
 
 # Load dataset
-BASE_DIR = Path(__file__).resolve().parent
+data_path = BASE_DIR / "data" / "Travel_details_dataset.csv"
 df = pd.read_csv(BASE_DIR / "Travel_details_dataset.csv")
 
 # Feature engineering
