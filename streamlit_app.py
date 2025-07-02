@@ -19,6 +19,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 MODEL_PATH = 'travel_cost_model.joblib'
 DATA_PATH = 'Travel_details_dataset.csv'
 
+# Destination list extracted from the dataset
 DESTINATIONS = [
     'London', 'Phuket', 'Bali', 'New York', 'Tokyo', 'Paris', 'Sydney',
     'Rio de Janeiro', 'Amsterdam', 'Dubai', 'Cancun', 'Barcelona',
@@ -27,13 +28,15 @@ DESTINATIONS = [
     'Phnom Penh', 'Athens', 'Auckland'
 ]
 
-NATIONALITIES = [
-    'United States', 'United Kingdom', 'Canada', 'Australia', 'Germany',
-    'France', 'Japan', 'China', 'India', 'Brazil', 'Mexico', 'Russia',
-    'South Korea', 'Singapore', 'United Arab Emirates', 'South Africa',
-    'Thailand', 'Italy', 'Spain', 'Netherlands', 'Switzerland', 'Sweden',
-    'Norway', 'New Zealand', 'Argentina', 'Saudi Arabia'
-]
+# Nationality list extracted from the dataset
+NATIONALITIES = sorted(list(set([
+    'American', 'Canadian', 'Korean', 'British', 'Vietnamese', 'Australian',
+    'Brazilian', 'Dutch', 'Emirati', 'Mexican', 'Spanish', 'Chinese',
+    'German', 'Moroccan', 'Scottish', 'Indian', 'Italian', 'South Korean',
+    'Taiwanese', 'South African', 'French', 'Japanese', 'Cambodia', 'Greece',
+    'United Arab Emirates', 'Hong Kong', 'Singapore', 'Indonesia', 'USA',
+    'UK', 'China', 'New Zealander'
+])))
 
 ACCOMMODATION_TYPES = [
     'Hotel', 'Resort', 'Villa', 'Airbnb', 'Hostel', 'Riad',
@@ -42,37 +45,62 @@ ACCOMMODATION_TYPES = [
 
 TRANSPORTATION_TYPES = [
     'Flight', 'Train', 'Plane', 'Bus', 'Car rental', 'Subway',
-    'Ferry', 'Car'
+    'Ferry', 'Car', 'Airplane'
 ]
 
 def clean_cost(value):
+    """Clean cost values that might contain currency symbols, commas, or text"""
     if pd.isna(value):
         return np.nan
     if isinstance(value, str):
-        cleaned = re.sub(r'[^\d.]', '', value)
+        # Remove currency symbols and text like 'USD'
+        cleaned = re.sub(r'[^\d.]', '', value.split('USD')[0].strip())
         return float(cleaned) if cleaned else np.nan
     return float(value)
 
+def clean_destination(dest):
+    """Clean destination names by extracting the main location"""
+    if pd.isna(dest):
+        return np.nan
+    dest = str(dest).split(',')[0].strip()
+    # Handle special cases
+    if dest == 'New York City':
+        return 'New York'
+    elif dest == 'Sydney, Aus' or dest == 'Sydney, AUS':
+        return 'Sydney'
+    elif dest == 'Bangkok, Thai':
+        return 'Bangkok'
+    elif dest == 'Phuket, Thai':
+        return 'Phuket'
+    elif dest == 'Cape Town, SA':
+        return 'Cape Town'
+    return dest
+
 def load_and_preprocess_data():
     try:
-        # Check if file exists
-        if not os.path.exists(DATA_PATH):
-            st.error(f"Dataset file not found at: {os.path.abspath(DATA_PATH)}")
-            st.info("Please make sure 'Travel_details_dataset.csv' is in the same directory as this script.")
-            return None, None
-            
-        df = pd.read_csv(DATA_PATH)
+        # Load the dataset with proper encoding
+        df = pd.read_csv(DATA_PATH, encoding='utf-8-sig')
         
         # Basic data validation
         if df.empty:
             st.warning("The dataset is empty!")
             return None, None
             
-        # Data cleaning
+        # Data cleaning - remove empty rows
         df = df.dropna(how='all')
+        
+        # Clean cost columns
         df['Accommodation cost'] = df['Accommodation cost'].apply(clean_cost)
         df['Transportation cost'] = df['Transportation cost'].apply(clean_cost)
+        
+        # Calculate total cost
         df['Total cost'] = df['Accommodation cost'] + df['Transportation cost']
+        
+        # Clean and standardize destination names
+        df['Destination'] = df['Destination'].apply(clean_destination)
+        
+        # Clean nationality - take first word if multiple words
+        df['Traveler nationality'] = df['Traveler nationality'].str.split().str[0].str.strip()
         
         # Date handling
         df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
@@ -83,29 +111,36 @@ def load_and_preprocess_data():
         df['Year'] = df['Start date'].dt.year
         df['Month'] = df['Start date'].dt.month
         df['Season'] = df['Start date'].dt.month % 12 // 3 + 1
-        df['Destination'] = df['Destination'].str.split(',').str[0].str.strip()
-        
-        # Handle nationality - if column doesn't exist, create with 'Unknown'
-        if 'Nationality' not in df.columns:
-            df['Nationality'] = 'Unknown'
-        else:
-            df['Nationality'] = df['Nationality'].fillna('Unknown')
-            df['Nationality'] = df['Nationality'].str.strip()
-        
-        # Additional feature engineering
         df['Duration (days)'] = (df['End date'] - df['Start date']).dt.days
+        
+        # Additional features
         df['Is_peak_season'] = df['Month'].isin([6, 7, 8, 12]).astype(int)
         df['Is_long_trip'] = (df['Duration (days)'] > 14).astype(int)
-        df['Is_domestic'] = (df['Nationality'] == df['Destination']).astype(int)
+        df['Is_domestic'] = (df['Traveler nationality'] == df['Destination']).astype(int)
         
-        # Select features
-        features = ['Destination', 'Nationality', 'Duration (days)', 'Accommodation type', 
-                   'Transportation type', 'Year', 'Month', 'Season',
-                   'Is_peak_season', 'Is_long_trip', 'Is_domestic']
+        # Clean accommodation type
+        df['Accommodation type'] = df['Accommodation type'].str.strip()
+        
+        # Clean transportation type
+        df['Transportation type'] = df['Transportation type'].str.strip()
+        # Standardize flight/airplane/plane to 'Flight'
+        df['Transportation type'] = df['Transportation type'].replace({
+            'Plane': 'Flight',
+            'Airplane': 'Flight'
+        })
+        
+        # Select features and target
+        features = ['Destination', 'Traveler nationality', 'Duration (days)', 
+                   'Accommodation type', 'Transportation type', 'Year', 
+                   'Month', 'Season', 'Is_peak_season', 'Is_long_trip', 'Is_domestic']
         target = 'Total cost'
         
-        # Final cleaning
+        # Final cleaning - remove rows with missing values in key columns
         df = df.dropna(subset=features + [target])
+        
+        # Filter out unrealistic values (optional)
+        df = df[(df['Total cost'] > 0) & (df['Total cost'] < 50000)]
+        df = df[(df['Duration (days)'] > 0) & (df['Duration (days)'] <= 90)]
         
         return df[features], df[target]
         
@@ -122,26 +157,8 @@ def evaluate_model(model, X, y):
         
         scores = cross_val_score(model, X, y, cv=5, scoring='r2')
         st.write(f"R² Score (CV): {scores.mean():.2f} (± {scores.std():.2f})")
-        
-        # Feature importance for Random Forest (if available)
-        if hasattr(model.named_steps['regressor'], 'estimators_'):
-            try:
-                rf = model.named_steps['regressor'].estimators_[0]
-                if hasattr(rf, 'feature_importances_'):
-                    # Get feature names after preprocessing
-                    preprocessor = model.named_steps['preprocessor']
-                    feature_names = (list(preprocessor.named_transformers_['cat'].get_feature_names_out()) + 
-                                   numerical_features)
-                    importances = rf.feature_importances_
-                    importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
-                    importance_df = importance_df.sort_values('Importance', ascending=False)
-                    
-                    st.subheader("Top Feature Importances")
-                    st.dataframe(importance_df.head(10))
-            except Exception as e:
-                st.warning(f"Could not display feature importances: {str(e)}")
     except Exception as e:
-        st.warning(f"Could not perform full model evaluation: {str(e)}")
+        st.warning(f"Could not perform cross-validation: {str(e)}")
 
 def train_model():
     X, y = load_and_preprocess_data()
@@ -150,7 +167,7 @@ def train_model():
         st.error("Cannot train model due to data issues.")
         return None
         
-    categorical_features = ['Destination', 'Nationality', 'Accommodation type', 'Transportation type']
+    categorical_features = ['Destination', 'Traveler nationality', 'Accommodation type', 'Transportation type']
     numerical_features = ['Duration (days)', 'Year', 'Month', 'Season', 'Is_peak_season', 'Is_long_trip', 'Is_domestic']
     
     preprocessor = ColumnTransformer(
@@ -189,7 +206,7 @@ def train_model():
             estimators=base_models,
             final_estimator=meta_model,
             n_jobs=-1,
-            passthrough=True  # Include original features along with base model predictions
+            passthrough=True
         ))
     ])
     
@@ -234,9 +251,12 @@ def predict_cost(model, nationality, destination, start_date, duration, accommod
         is_long_trip = 1 if duration > 14 else 0
         is_domestic = 1 if nationality == destination else 0
         
+        # Standardize transportation type
+        transportation = 'Flight' if transportation in ['Plane', 'Airplane'] else transportation
+        
         input_data = pd.DataFrame({
             'Destination': [destination],
-            'Nationality': [nationality],
+            'Traveler nationality': [nationality],
             'Duration (days)': [duration],
             'Accommodation type': [accommodation],
             'Transportation type': [transportation],
