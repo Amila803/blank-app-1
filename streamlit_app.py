@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import joblib
 from datetime import datetime
+from pathlib import Path
 import os
 import sys
 import re
@@ -17,7 +18,8 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 # Constants
 MODEL_PATH = 'travel_cost_model.joblib'
-DATA_PATH = 'Travel_details_dataset.csv'
+BASE_DIR = Path(__file__).parent
+DATA_PATH = BASE_DIR / "data" / "Travel_details_dataset.csv"
 
 # Destination list extracted from the dataset
 DESTINATIONS = [
@@ -76,77 +78,78 @@ def clean_destination(dest):
         return 'Cape Town'
     return dest
 
-def load_and_preprocess_data():
-    try:
-        # Load the dataset with proper encoding
+def load_data():
+    """Load the dataset with file upload fallback"""
+    if DATA_PATH.exists():
         df = pd.read_csv(DATA_PATH, encoding='utf-8-sig')
-        
-        # Basic data validation
-        if df.empty:
-            st.warning("The dataset is empty!")
-            return None, None
-            
-        # Data cleaning - remove empty rows
-        df = df.dropna(how='all')
-        
-        # Clean cost columns
-        df['Accommodation cost'] = df['Accommodation cost'].apply(clean_cost)
-        df['Transportation cost'] = df['Transportation cost'].apply(clean_cost)
-        
-        # Calculate total cost
-        df['Total cost'] = df['Accommodation cost'] + df['Transportation cost']
-        
-        # Clean and standardize destination names
-        df['Destination'] = df['Destination'].apply(clean_destination)
-        
-        # Clean nationality - take first word if multiple words
-        df['Traveler nationality'] = df['Traveler nationality'].str.split().str[0].str.strip()
-        
-        # Date handling
-        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-        df['End date'] = pd.to_datetime(df['End date'], errors='coerce')
-        df = df.dropna(subset=['Start date', 'End date'])
-        
-        # Feature engineering
-        df['Year'] = df['Start date'].dt.year
-        df['Month'] = df['Start date'].dt.month
-        df['Season'] = df['Start date'].dt.month % 12 // 3 + 1
-        df['Duration (days)'] = (df['End date'] - df['Start date']).dt.days
-        
-        # Additional features
-        df['Is_peak_season'] = df['Month'].isin([6, 7, 8, 12]).astype(int)
-        df['Is_long_trip'] = (df['Duration (days)'] > 14).astype(int)
-        df['Is_domestic'] = (df['Traveler nationality'] == df['Destination']).astype(int)
-        
-        # Clean accommodation type
-        df['Accommodation type'] = df['Accommodation type'].str.strip()
-        
-        # Clean transportation type
-        df['Transportation type'] = df['Transportation type'].str.strip()
-        # Standardize flight/airplane/plane to 'Flight'
-        df['Transportation type'] = df['Transportation type'].replace({
-            'Plane': 'Flight',
-            'Airplane': 'Flight'
-        })
-        
-        # Select features and target
-        features = ['Destination', 'Traveler nationality', 'Duration (days)', 
-                   'Accommodation type', 'Transportation type', 'Year', 
-                   'Month', 'Season', 'Is_peak_season', 'Is_long_trip', 'Is_domestic']
-        target = 'Total cost'
-        
-        # Final cleaning - remove rows with missing values in key columns
-        df = df.dropna(subset=features + [target])
-        
-        # Filter out unrealistic values (optional)
-        df = df[(df['Total cost'] > 0) & (df['Total cost'] < 50000)]
-        df = df[(df['Duration (days)'] > 0) & (df['Duration (days)'] <= 90)]
-        
-        return df[features], df[target]
-        
-    except Exception as e:
-        st.error(f"Error loading or processing data: {str(e)}")
-        return None, None
+    else:
+        upload = st.file_uploader("Upload Travel_details_dataset.csv", type="csv")
+        if upload:
+            df = pd.read_csv(upload)
+        else:
+            st.warning("Please upload the dataset to continue")
+            st.stop()
+    
+    # Basic data validation
+    df.columns = df.columns.str.strip()
+    if "Destination" not in df.columns:
+        st.error("Column `Destination` not found. Available: " + ", ".join(df.columns))
+        st.stop()
+    
+    with st.expander("📋 Show sample data"):
+        st.dataframe(df.head(10))
+    
+    return df
+
+def preprocess_data(df):
+    """Preprocess the loaded dataset"""
+    # Data cleaning - remove empty rows
+    df = df.dropna(how='all')
+    
+    # Clean cost columns
+    df['Accommodation cost'] = df['Accommodation cost'].apply(clean_cost)
+    df['Transportation cost'] = df['Transportation cost'].apply(clean_cost)
+    
+    # Calculate total cost
+    df['Total cost'] = df['Accommodation cost'] + df['Transportation cost']
+    
+    # Clean and standardize columns
+    df['Destination'] = df['Destination'].apply(clean_destination)
+    df['Traveler nationality'] = df['Traveler nationality'].str.split().str[0].str.strip()
+    df['Accommodation type'] = df['Accommodation type'].str.strip()
+    df['Transportation type'] = df['Transportation type'].str.strip().replace({
+        'Plane': 'Flight',
+        'Airplane': 'Flight'
+    })
+    
+    # Date handling
+    df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+    df['End date'] = pd.to_datetime(df['End date'], errors='coerce')
+    df = df.dropna(subset=['Start date', 'End date'])
+    
+    # Feature engineering
+    df['Year'] = df['Start date'].dt.year
+    df['Month'] = df['Start date'].dt.month
+    df['Season'] = df['Start date'].dt.month % 12 // 3 + 1
+    df['Duration (days)'] = (df['End date'] - df['Start date']).dt.days
+    
+    # Additional features
+    df['Is_peak_season'] = df['Month'].isin([6, 7, 8, 12]).astype(int)
+    df['Is_long_trip'] = (df['Duration (days)'] > 14).astype(int)
+    df['Is_domestic'] = (df['Traveler nationality'] == df['Destination']).astype(int)
+    
+    # Select features and target
+    features = ['Destination', 'Traveler nationality', 'Duration (days)', 
+               'Accommodation type', 'Transportation type', 'Year', 
+               'Month', 'Season', 'Is_peak_season', 'Is_long_trip', 'Is_domestic']
+    target = 'Total cost'
+    
+    # Final cleaning
+    df = df.dropna(subset=features + [target])
+    df = df[(df['Total cost'] > 0) & (df['Total cost'] < 50000)]
+    df = df[(df['Duration (days)'] > 0) & (df['Duration (days)'] <= 90)]
+    
+    return df[features], df[target]
 
 def evaluate_model(model, X, y):
     """Evaluate model performance using cross-validation"""
@@ -161,7 +164,8 @@ def evaluate_model(model, X, y):
         st.warning(f"Could not perform cross-validation: {str(e)}")
 
 def train_model():
-    X, y = load_and_preprocess_data()
+    df = load_data()
+    X, y = preprocess_data(df)
     
     if X is None or y is None:
         st.error("Cannot train model due to data issues.")
