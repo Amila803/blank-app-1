@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 BASE_DIR = Path(__file__).resolve().parent
-model_path = BASE_DIR / "models" / "trip_cost_forecast_model.pkl"
+model_path = BASE_DIR / "model" / "trip_cost_forecast_model.pkl"
 
 st.title("💸 Travel Cost Predictor")
 
