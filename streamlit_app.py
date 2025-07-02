@@ -242,6 +242,98 @@ def load_model():
         st.warning("Attempting to train a new model...")
         return train_model()
 
+def get_kiwi_flight_prices(origin, destination, departure_date, return_date=None, currency='USD'):
+    """
+    Get flight prices from Kiwi's Tequila API (requires API key)
+    """
+    KIWI_API_KEY = "your_kiwi_api_key"  # Get from https://tequila.kiwi.com/
+    
+    if return_date is None:
+        return_date = departure_date + datetime.timedelta(days=7)
+    
+    url = "https://tequila-api.kiwi.com/v2/search"
+    params = {
+        'fly_from': origin,
+        'fly_to': destination,
+        'date_from': departure_date.strftime('%d/%m/%Y'),
+        'date_to': departure_date.strftime('%d/%m/%Y'),
+        'return_from': return_date.strftime('%d/%m/%Y'),
+        'return_to': return_date.strftime('%d/%m/%Y'),
+        'curr': currency,
+        'limit': 5  # Get top 5 cheapest
+    }
+    
+    headers = {
+        'apikey': KIWI_API_KEY
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            if 'data' in data and len(data['data']) > 0:
+                # Return the cheapest flight price
+                return data['data'][0]['price']
+            return None
+        else:
+            st.warning(f"Flight API returned status {response.status_code}")
+            return None
+    except Exception as e:
+        st.warning(f"Couldn't fetch flight prices: {str(e)}")
+        return None
+
+def predict_cost(model, nationality, origin, destination, start_date, duration, accommodation, transportation):
+    if model is None:
+        st.error("Cannot make predictions - no model available")
+        return None
+        
+    try:
+        # Calculate additional features
+        month = start_date.month
+        season = (month % 12) // 3 + 1
+        is_peak_season = 1 if month in [6, 7, 8, 12] else 0
+        is_long_trip = 1 if duration > 14 else 0
+        is_domestic = 1 if nationality == destination else 0
+        
+        # Get real-time flight prices if transportation is flight
+        flight_price = None
+        if transportation in ['Flight', 'Plane', 'Airplane']:
+            return_date = start_date + datetime.timedelta(days=duration)
+            flight_price = get_flight_prices(origin, destination, start_date, return_date)
+            
+            if flight_price:
+                st.info(f"Current flight price: ${flight_price}")
+        
+        input_data = pd.DataFrame({
+            'Destination': [destination],
+            'Traveler nationality': [nationality],
+            'Duration (days)': [duration],
+            'Accommodation type': [accommodation],
+            'Transportation type': [transportation],
+            'Year': [start_date.year],
+            'Month': [month],
+            'Season': [season],
+            'Is_peak_season': [is_peak_season],
+            'Is_long_trip': [is_long_trip],
+            'Is_domestic': [is_domestic]
+        })
+        
+        # Get base prediction
+        base_prediction = model.predict(input_data)[0]
+        
+        # Adjust prediction if we have real flight data
+        if flight_price and transportation in ['Flight', 'Plane', 'Airplane']:
+            # Blend model prediction with real flight data (70% model, 30% real)
+            adjusted_prediction = (base_prediction * 0.7) + (flight_price * 0.3)
+            st.info("Adjusted prediction with real flight data")
+            return round(adjusted_prediction, 2)
+        else:
+            return round(base_prediction, 2)
+            
+    except Exception as e:
+        st.error(f"Prediction error: {str(e)}")
+        return None
+
 def predict_cost(model, nationality, destination, start_date, duration, accommodation, transportation):
     if model is None:
         st.error("Cannot make predictions - no model available")
