@@ -12,12 +12,62 @@ model_path = BASE_DIR / "model" / "trip_cost_forecast_model.py"
 st.title("💸 Travel Cost Predictor")
 
 # Load model
-if model_path.exists():
-    model = joblib.load(model_path)
-else:
-    st.error("❌ Model file not found!")
-    st.stop()
+# data/train_cost_forecast_model.py
 
+from pathlib import Path
+import pandas as pd
+import joblib
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_absolute_error
+
+
+
+# Load dataset
+data_path = BASE_DIR / "data" / "Travel_details_dataset.csv"
+df = pd.read_csv(BASE_DIR / "data" / "Travel_details_dataset.csv")
+
+# Feature engineering
+df["Start date"] = pd.to_datetime(df["Start date"], errors='coerce')
+df = df.dropna(subset=["Start date", "Destination", "Accommodation cost", "Transportation cost"])
+
+df["month"] = df["Start date"].dt.month
+df["dayofweek"] = df["Start date"].dt.dayofweek
+df["total_cost"] = df["Accommodation cost"] + df["Transportation cost"]
+
+X = df[["Destination", "month", "dayofweek"]]
+y = df["total_cost"]
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
+
+# Preprocessing pipeline
+preprocessor = ColumnTransformer([
+    ("cat", OneHotEncoder(handle_unknown='ignore'), ["Destination"]),
+], remainder="passthrough")
+
+# Modeling pipeline
+pipe = Pipeline([
+    ("preprocessor", preprocessor),
+    ("model", GradientBoostingRegressor())
+])
+
+# Train
+pipe.fit(X_train, y_train)
+
+# Evaluate
+preds = pipe.predict(X_test)
+print("MAE:", mean_absolute_error(y_test, preds))
+
+# Save model
+model_dir = BASE_DIR / "model"
+model_dir.mkdir(exist_ok=True)
+joblib.dump(pipe, model_dir / "trip_cost_forecast_model.pkl")
+print("✅ Model saved to", model_dir / "trip_cost_forecast_model.pkl")
 # Inputs
 destination = st.selectbox("Select Destination", [
     "London, UK", "Phuket, Thailand", "Bali, Indonesia",
